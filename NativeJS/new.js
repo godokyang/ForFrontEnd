@@ -71,3 +71,12 @@ let d = ObjCreate(Person.prototype)
 console.log(a, b, c, d);
 
 
+
+// 第二周，忘记Obj的this指向为__proto__,当result的返回值为object时才返回
+function ___new() {
+  let [constructor, ...args] = arguments
+  let Obj = {}
+  Obj.__proto__ = constructor.prototype
+  let result = constructor.apply(Obj, args)
+  return typeof result === "function" || typeof result === "object" ? result : Obj;
+}

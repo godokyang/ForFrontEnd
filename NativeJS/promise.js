@@ -22,118 +22,316 @@ const PENDING = "pending"
 const FULLFILLED = "fulfilled"
 const REJECTED = "rejected"
 
-function MyPromise(fn) {
-  // 保存this指针，因为promise有可能会异步执行，执行过程中需要指向正确的上下文
-  let that = this; 
-  // 3.c, 3.a
-  that.value = null;
-  that.status = PENDING;
-  // resolvedCallbacks 和 rejectedCallbacks 用于保存 then 中的回调，因为当执行完 Promise 时状态可能还是等待中，这时候应该把 then 中的回调保存起来用于状态改变时使用
-  that.resolvedCallbacks = [];
-  that.rejectedCallbacks = [];
-
-  // resolve 和 reject执行的步骤相同, 
-  // 1. 接收一个value，保存
-  // 2. 重置状态
-  // 3. 执行callback数组中的回调
+function _Promise(fn) {
+  let self = this;
+  // 初始化status状态
+  self.status = PENDING;
+  // 初始化resolve或者reject接收的value值
+  self.value = null;
+  // 初始化resolve/reject队列
+  self.resolveCallbacks = [];
+  self.rejectCallbacks = [];
   function resolve(value) {
-    if (that.status === PENDING) {
-      that.status = FULLFILLED;
-      that.value = value;
-      that.resolvedCallbacks.map((cb) => {
-        cb(value)
-      })
+    // 规范规定status只能从pending跳转到其他状态，不能从其他状态跳转到pending
+    if (self.status !== PENDING) {
+      return
     }
+    self.status = FULLFILLED
+    self.value = value
+    // 改变状态以后遍历队列，分别执行队列中的callback
+    self.resolveCallbacks.map((cb) => {
+      return cb(value)
+    })
   }
 
-  function reject() {
-    if (that.status === PENDING) {
-      that.status = FULLFILLED;
-      that.value = value;
-      that.rejectedCallbacks.map((cb) => {
-        cb(value)
-      })
+  function reject(value) {
+    if (self.status !== PENDING) {
+      return
     }
+    self.status = REJECTED
+    self.value = value
+    self.rejectCallbacks.map((cb) => {
+      return cb(value)
+    })
   }
 
-  // 预防fn执行出错，所以这里要try一下并且用reject接收error
+  // 保护fn执行出错的情况，直接执行reject
   try {
-    fn(resolve, reject)
+    fn(resolve, reject);
   } catch (error) {
-    reject(error)
+    reject(error);
   }
 }
 
-/**
-   * then方法的实现
-   * 1. then可以接受两个参数resolve,reject。注意：两个参数都可空
-   * 2. then方法是所有new出来的promise对象都需要继承的方法，所以应该注册到原型链上面
-*/
-MyPromise.prototype.then = function(onResolve, onReject) {
-  let that = this;
-  // 首先判断两个参数是否为函数类型，因为这两个参数是可选参数
-  // 当参数不是函数类型时，需要创建一个函数赋值给对应的参数，此时还不能实现透传
-  let localOnResolve = typeof onReject === 'function' ? onResolve : v => v;
-  let localOnReject = typeof onReject === 'function' ? onReject : r => {throw r};
+function resolvePromise(promise2, x, resolve, reject) {
+  // 循环引用报错
+  if (x === promise2) {
+    // 直接reject
+    return reject(new TypeError('Chaining cycle detected for promise'));
+  }
+  let called;
+  if (x != null && (typeof x === 'object' || typeof x === 'function')) {
+    try {
+      let then = x.then
+      // 如果then是函数就默认是promise，因为要支持不同的promise互相嵌套，如果只是自己玩的话就用x instanceof Promise就好了
+      if (typeof then === 'function') {
+        then.call(
+          x,
+          y => {
+            // called用来控制成功和失败只能调用一次
+            if (called) return;
+            called = true
+            resolvePromise(promise2, y, resolve, reject);
+          },
+          err => {
+            // called用来控制成功和失败只能调用一次
+            if (called) return;
+            called = true
+            reject(err)
+          }
+        )
+      } else {
+        resolve(x)
+      }
+    } catch (error) {
+      reject(error)
+    }
+  } else {
+    resolve(x)
+  }
+}
 
-  // 接下来就是一系列判断状态的逻辑，当状态不是等待态时，就去执行相对应的函数。如果状态是等待态的话，就往回调函数中 push 函数
-  /**
-   * 下面的例子就是等待态的执行
-   * new MyPromise((resolve, reject) => {
+// then方法需要每个promise的实例都可以调用 所以应该注册到原型链上面，race和all同理
+_Promise.prototype.then = function (onResolve, onReject) {
+  let self = this;
+  // 处理resove和reject为空的情况
+  let _onResolve = typeof onResolve === "function" ? onResolve : v => v;
+  let _onReject = typeof onReject === "function" ? onReject : err => { throw err };
+
+  let promise2 = new _Promise((res, rej) => {
+    if (self.status === PENDING) {
+      self.resolveCallbacks.push(() => {
+        try {
+          let x = _onResolve(self.value);
+          resolvePromise(promise2, x, res, rej)
+        } catch (error) {
+          rej(error)
+        }
+      });
+      self.rejectCallbacks.push(() => {
+        try {
+          let x = _onReject(self.value);
+          resolvePromise(promise2, x, res, rej)
+        } catch (error) {
+          rej(error)
+        }
+      });
+    }
+
+    // 当then执行的时候判断status!=PENDING，则立即调用resolve
+    if (self.status === FULLFILLED) {
+      // 秘籍规定这里不能同步调用
       setTimeout(() => {
-      resolve(1)
-      }, 0)
-      }).then(value => {
-      console.log(value)
-      })
-   */
-  if (that.status === PENDING) {
-    // return 一个promise 实现链式调用
-    // 上一个promise的返回值需要作为下一个promise的入参
-    // 下面两个同理
-    return new MyPromise((resolve, reject) => {
-      that.resolvedCallbacks.push(() => {
-        localOnResolve(that.value)
-      });
-      that.rejectedCallbacks.push(() => {
-        localOnReject(that.value)
-      });
-    })
-  }
+        try {
+          let x = _onResolve(self.value);
+          resolvePromise(promise2, x, res, rej)
+        } catch (error) {
+          rej(self.value)
+        }
+      }, 0);
+    }
 
-  if (that.status === FULLFILLED) {
-    return new MyPromise((resolve, reject) => {
-      resolve(() => {
-        localOnResolve(that.value)
-      })
-    })
-  }
+    if (self.status === REJECTED) {
+      // 秘籍规定这里不能同步调用
+      setTimeout(() => {
+        // 预防出错
+        try {
+          let x = _onReject(self.value);
+          resolvePromise(promise2, x, res, rej)
+        } catch (error) {
+          rej(self.value)
+        }
+      }, 0);
+    }
+  })
 
-  if (that.status === REJECTED) {
-    return new MyPromise((resolve, reject) => {
-      reject(() => {
-        localOnReject(that.value)
-      })
-    })
-  }
+  return promise2;
+
+  // return new _Promise((res, rej) => {
+  //   if (self.status === PENDING) {
+  //     self.resolveCallbacks.push(() => {
+  //       let x = _onResolve(self.value);
+  //       // 如果回调的返回值是object或者function就提取then方法手动执行并传入新的resolve/reject
+  //       // 否则直接执行相应的resolve/reject
+  //       // 这样就可以实现链式调用
+  //       if (x != null && (typeof x === 'object' || typeof x === 'function')) {
+  //         let then = x.then;
+  //         then.call(x, res, rej)
+  //         return
+  //       }
+  //       res(x)
+  //     });
+  //     self.rejectCallbacks.push(() => {
+  //       let x = _onReject(self.value);
+  //       if (x != null && (typeof x === 'object' || typeof x === 'function')) {
+  //         let then = x.then;
+  //         then.call(x, res, rej)
+  //         return
+  //       }
+  //       rej(x)
+  //     });
+  //   }
+
+  //   // 当then执行的时候判断status!=PENDING，则立即调用resolve
+  //   if (self.status === FULLFILLED) {
+  //     let x = _onResolve(self.value);
+  //     if (x != null && (typeof x === 'object' || typeof x === 'function')) {
+  //       let then = x.then;
+  //       then.call(x, res, rej)
+  //       return
+  //     }
+  //     res(x)
+  //   }
+
+  //   if (self.status === REJECTED) {
+  //     let x = _onReject(self.value);
+  //     if (x != null && (typeof x === 'object' || typeof x === 'function')) {
+  //       let then = x.then;
+  //       then.call(x, res, rej)
+  //       return
+  //     }
+  //     rej(x)
+  //   }
+  // })
 }
 
 // 测试
-const test = new Promise((resolve, reject) => {
+// const testSync = new _Promise((resolve, reject) => {
+//   setTimeout(() => {
+//     resolve(100);
+//     // let random = Math.random();
+//     // if (random > 0.5) {
+//     //   resolve(100);
+//     // } else {
+//     //   reject(10);
+//     // }
+//   }, 0);
+// })
+// testSync.then(
+//   (value) => {
+//     console.log("resolve1:", value);
+//     return value + 1
+//   },
+//   (err) => {
+//     console.error("error:", err);
+//   }
+// ).then(
+//   (value) => {
+//     console.log("resolve2:", value);
+//     return value + 0.1
+//   },
+//   (err) => {
+//     console.error("error:", err);
+//   }
+// ).then(
+//   (value) => {
+//     console.log("resolve3:", value);
+//     // return value + 1
+//   },
+//   (err) => {
+//     console.error("error:", err);
+//   }
+// )
+
+_Promise.prototype.all = function(promiseArray) {
+  // 新增一个count计数, 一个存放返回值的数组
+  // 当所有的promise都执行完以后调用resolve即可
+  return new _Promise((resolve,reject) => {
+    let responseArr = [];
+    let count = 0;
+    promiseArray.forEach(promise => {
+      promise.then((data) => {
+        responseArr.push(data);
+        count++;
+        if (count === promiseArray.length) {
+          resolve(responseArr);
+        }
+      }, reject)
+    })
+  })
+}
+
+_Promise.prototype.race = function(promiseArray){
+  // race是谁现跑赢执行谁
+  // promise控制执行resolve/reject的flag是status，所以直接把两个方法传入，现完成的promise会优先改变status，剩下的就没有办法再执行了
+  return new _Promise((resolve,reject) => {
+    promiseArray.forEach(promise => {
+      promise.then(resolve, reject);
+    })
+  })
+}
+
+const test = new _Promise((resolve, reject) => {
   setTimeout(() => {
     resolve(100);
-  }, 2000)
+  }, 500)
+  // resolve(100);
 });
-test.then((data) => {
-  console.log(data);
-  return data + 5;
-},(data) => {})
-.then((data) => {
-  console.log(data)
-  return data + 6
-},(data) => {})
-.then((data) => {
-  console.log(data)
-  return data
-},(data) => {})
+
+const test1 = function (data) {
+  return new _Promise((resolve, reject) => {
+    setTimeout(() => {
+      let random = Math.random();
+      if (random > 0.5) {
+        resolve(data + 0.1);
+      } else {
+        reject(data + 0.1);
+      }
+    }, 500)
+  });
+}
+
+const test2 = function (data) {
+  return new _Promise((resolve, reject) => {
+    setTimeout(() => {
+      let random = Math.random()
+      console.log(random);
+      if (random > 0.5) {
+        resolve(data + random);
+      } else {
+        reject(data + random);
+      }
+    }, 100)
+  });
+}
+test
+  .then((data) => {
+    console.log("resolve1:", data);
+    return data + 5;
+  }, (data) => {
+    console.log("error1:", data);
+  })
+  .then((data) => {
+    console.log("resolve2:", data);
+    return data + 6
+  }, (data) => {
+    console.log("error2:", data);
+  })
+  .then((data) => {
+    console.log("resolve3:", data);
+    return test1(data)
+  }, (data) => {
+    console.log("error3:", data);
+  })
+  .then((data) => {
+    console.log("resolve4:", data);
+    return test2(data)
+  }, (data) => {
+    console.log("error4:", data);
+  })
+  .then((data) => {
+    console.log("resolve5:", data);
+  }, (data) => {
+    console.log("error5:", data);
+  })
 
