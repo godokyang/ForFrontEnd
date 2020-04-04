@@ -28,7 +28,7 @@ Function.prototype._apply = function(content, args){
   4. 构造函数上的属性和方法，每个实例上都有。
  */
 
-Function.prototype._bind = function(target){
+Function.prototype._bind = function(){
   // 返回一个方法，接收参数，延迟传参
   if (target === undefined || target === null) {
     target = window || global;
@@ -57,11 +57,12 @@ Function.prototype._bind = function(target){
   return resFn
 }
 
-// instaceOf 判断father在不在child的原型链上
+// instaceOf 判断father构造函数的原型在不在child的原型链上，判断继承
 // 递归判断
 // 注意这里 不能用child.__proto__，原则上__proto__只是浏览器对js原生映射的实现，chrome是以__proto__为属性有可能其他浏览器会用其它的属性名, 所以这里要用getPrototypeOf来获取
 let _instanceOf = function(child, father){
-  const _proto = Object.getPrototypeOf(child), _prototype = father.prototype;
+  const _proto = Object.getPrototypeOf(child), 
+  _prototype = father.prototype;
 
   if (_proto === null || _proto === undefined) {
     return false
@@ -71,7 +72,7 @@ let _instanceOf = function(child, father){
     return true
   }
 
-  return _instanceOf(Object.getPrototypeOf(_proto), _prototype)
+  return _instanceOf(Object.getPrototypeOf(_proto), father)
 }
 
 // 递归比较耗内存 改一波  用while实现
