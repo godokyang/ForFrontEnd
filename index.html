@@ -7,8 +7,25 @@
   <title>Document</title>
 </head>
 <body>
+  <div id="content" style="height:150px;line-height:150px;text-align:center; color: #fff;background-color:#ccc;font-size:80px;"></div>
   <script src="./NativeJS/new.js"></script>
   <script src="./NativeJS/promise.js"></script>
   <script src="./NativeJS/resetObj.js"></script>
+  <script src="./NativeJS/debounce.js"></script>
+  <script>
+    let testTimeOut = setTimeout(() => {
+      console.log('====================================');
+      console.log(11111);
+      console.log('====================================');
+    }, 1000);
+    console.log('=================1===================');
+    console.log(!!testTimeOut);
+    console.log('====================================');
+    clearTimeout(testTimeOut)
+    console.log('================2====================');
+    console.log(!!testTimeOut);
+    console.log('====================================');
+  </script>
+  <!-- <script src="./NativeJS/questions.js"></script> -->
 </body>
 </html>
